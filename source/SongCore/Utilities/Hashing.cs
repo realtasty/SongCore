@@ -20,23 +20,9 @@ namespace SongCore.Utilities
 
         public static void ReadCachedSongHashes()
         {
-            if (File.Exists(cachedHashDataPath))
-            {
-                try
-                {
-                    var songHashData = JsonConvert.DeserializeObject<ConcurrentDictionary<string, SongHashData>>(File.ReadAllText(cachedHashDataPath));
-                    if (songHashData != null)
-                    {
-                        cachedSongHashData = songHashData;
-                        Plugin.Log.Info($"Finished loading cached hashes for {cachedSongHashData.Count} songs.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log.Error($"Error loading cached song hashes: {ex.Message}");
-                    Plugin.Log.Error(ex);
-                }
-            }
+            BinaryCache.Load();
+            BinaryCache.PopulateLegacyHashDictionary(cachedSongHashData);
+            Plugin.Log.Info($"Finished loading cached hashes for {cachedSongHashData.Count} songs.");
         }
 
         public static void UpdateCachedHashes(HashSet<string> currentSongPaths)
@@ -44,52 +30,33 @@ namespace SongCore.Utilities
             UpdateCachedHashesInternal(currentSongPaths);
         }
 
-        /// <summary>
-        /// Intended for use in the Loader
-        /// </summary>
-        /// <param name="currentSongPaths"></param>
         internal static void UpdateCachedHashesInternal(ICollection<string> currentSongPaths)
         {
-            foreach (var levelPath in cachedSongHashData.Keys)
-            {
-                var absolutePath = GetAbsolutePath(levelPath);
-                if (!currentSongPaths.Contains(absolutePath) || (absolutePath == levelPath && IsInInstallPath(levelPath)))
-                {
-                    cachedSongHashData.TryRemove(levelPath, out _);
-                }
-            }
 
-            try
+            foreach (var kvp in cachedSongHashData)
             {
-                Plugin.Log.Info($"Saving cached hashes for {cachedSongHashData.Count} songs.");
-                File.WriteAllText(cachedHashDataPath, JsonConvert.SerializeObject(cachedSongHashData));
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.Error($"Error saving cached song hashes: {ex.Message}");
-                Plugin.Log.Error(ex);
+                if (BinaryCache.TryGet(kvp.Key, out var existing))
+                {
+                    existing.SongHash = kvp.Value.songHash;
+                    existing.DirTimestamp = kvp.Value.directoryHash;
+                }
+                else
+                {
+                    BinaryCache.Set(kvp.Key, new BinaryCache.CacheEntry
+                    {
+                        RelativePath = kvp.Key,
+                        DirTimestamp = kvp.Value.directoryHash,
+                        SongHash = kvp.Value.songHash
+                    });
+                }
             }
         }
 
         public static void ReadCachedAudioData()
         {
-            if (File.Exists(cachedAudioDataPath))
-            {
-                try
-                {
-                    var audioData = JsonConvert.DeserializeObject<ConcurrentDictionary<string, AudioCacheData>>(File.ReadAllText(cachedAudioDataPath));
-                    if (audioData != null)
-                    {
-                        cachedAudioData = audioData;
-                        Plugin.Log.Info($"Finished loading cached durations for {cachedAudioData.Count} songs.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log.Error($"Error loading cached song durations: {ex.Message}");
-                    Plugin.Log.Error(ex);
-                }
-            }
+
+            BinaryCache.PopulateLegacyAudioDictionary(cachedAudioData);
+            Plugin.Log.Info($"Finished loading cached durations for {cachedAudioData.Count} songs.");
         }
 
         public static void UpdateCachedAudioData(HashSet<string> currentSongPaths)
@@ -97,46 +64,21 @@ namespace SongCore.Utilities
             UpdateCachedAudioDataInternal(currentSongPaths);
         }
 
-        /// <summary>
-        /// Intended for use in the Loader
-        /// </summary>
-        /// <param name="currentSongPaths"></param>
         internal static void UpdateCachedAudioDataInternal(ICollection<string> currentSongPaths)
         {
-            foreach (var levelPath in cachedAudioData.Keys)
+            foreach (var kvp in cachedAudioData)
             {
-                var absolutePath = GetAbsolutePath(levelPath);
-                if (!currentSongPaths.Contains(absolutePath) || (absolutePath == levelPath && IsInInstallPath(levelPath)))
+                if (BinaryCache.TryGet(kvp.Key, out var existing))
                 {
-                    cachedAudioData.TryRemove(levelPath, out _);
+                    existing.Duration = kvp.Value.duration;
+                    existing.LevelId = kvp.Value.id;
                 }
-            }
-
-            try
-            {
-                Plugin.Log.Info($"Saving cached durations for {cachedAudioData.Count} songs.");
-                File.WriteAllText(cachedAudioDataPath, JsonConvert.SerializeObject(cachedAudioData));
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.Error($"Error saving cached song durations: {ex.Message}");
-                Plugin.Log.Error(ex);
             }
         }
 
         private static long GetDirectoryHash(string directory)
         {
-            long hash = 0;
-            DirectoryInfo directoryInfo = new DirectoryInfo(directory);
-            foreach (FileInfo f in directoryInfo.GetFiles())
-            {
-                hash ^= f.CreationTimeUtc.ToFileTimeUtc();
-                hash ^= f.LastWriteTimeUtc.ToFileTimeUtc();
-                hash ^= f.Name.GetHashCode();
-                hash ^= f.Length;
-            }
-
-            return hash;
+            return Directory.GetLastWriteTimeUtc(directory).ToFileTimeUtc();
         }
 
         private static bool GetCachedSongData(string customLevelPath, out long directoryHash, out string cachedSongHash)
@@ -144,7 +86,25 @@ namespace SongCore.Utilities
             directoryHash = GetDirectoryHash(customLevelPath);
 
             TryGetRelativePath(customLevelPath, out var relativePath);
-            if (cachedSongHashData.TryGetValue(relativePath, out var cachedSong) && cachedSong.directoryHash == directoryHash)
+
+
+            if (BinaryCache.TryGetValid(relativePath, directoryHash, out var cachedEntry) &&
+                !string.IsNullOrEmpty(cachedEntry.SongHash))
+            {
+                cachedSongHash = cachedEntry.SongHash;
+                return true;
+            }
+
+            if (BinaryCache.TryGet(relativePath, out var anyEntry) &&
+                !string.IsNullOrEmpty(anyEntry.SongHash))
+            {
+                cachedSongHash = anyEntry.SongHash;
+                return true;
+            }
+
+
+            if (cachedSongHashData.TryGetValue(relativePath, out var cachedSong) &&
+                !string.IsNullOrEmpty(cachedSong.songHash))
             {
                 cachedSongHash = cachedSong.songHash;
                 return true;
@@ -221,6 +181,14 @@ namespace SongCore.Utilities
             string hash = CreateSha1FromFilesWithPrependBytes(prependBytes, files);
             TryGetRelativePath(customLevelFolderInfo.folderPath, out var relativePath);
             cachedSongHashData[relativePath] = new SongHashData(directoryHash, hash);
+
+
+            var entry = BinaryCache.TryGet(relativePath, out var existing) ? existing : new BinaryCache.CacheEntry();
+            entry.RelativePath = relativePath;
+            entry.DirTimestamp = directoryHash;
+            entry.SongHash = hash;
+            BinaryCache.Set(relativePath, entry);
+
             return hash;
         }
 
