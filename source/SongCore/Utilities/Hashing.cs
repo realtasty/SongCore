@@ -78,7 +78,17 @@ namespace SongCore.Utilities
 
         private static long GetDirectoryHash(string directory)
         {
-            return Directory.GetLastWriteTimeUtc(directory).ToFileTimeUtc();
+            long hash = 0;
+            DirectoryInfo directoryInfo = new DirectoryInfo(directory);
+            foreach (FileInfo f in directoryInfo.GetFiles())
+            {
+                hash ^= f.CreationTimeUtc.ToFileTimeUtc();
+                hash ^= f.LastWriteTimeUtc.ToFileTimeUtc();
+                hash ^= f.Name.GetHashCode();
+                hash ^= f.Length;
+            }
+
+            return hash;
         }
 
         private static bool GetCachedSongData(string customLevelPath, out long directoryHash, out string cachedSongHash)
@@ -87,26 +97,10 @@ namespace SongCore.Utilities
 
             TryGetRelativePath(customLevelPath, out var relativePath);
 
-
             if (BinaryCache.TryGetValid(relativePath, directoryHash, out var cachedEntry) &&
                 !string.IsNullOrEmpty(cachedEntry.SongHash))
             {
                 cachedSongHash = cachedEntry.SongHash;
-                return true;
-            }
-
-            if (BinaryCache.TryGet(relativePath, out var anyEntry) &&
-                !string.IsNullOrEmpty(anyEntry.SongHash))
-            {
-                cachedSongHash = anyEntry.SongHash;
-                return true;
-            }
-
-
-            if (cachedSongHashData.TryGetValue(relativePath, out var cachedSong) &&
-                !string.IsNullOrEmpty(cachedSong.songHash))
-            {
-                cachedSongHash = cachedSong.songHash;
                 return true;
             }
 

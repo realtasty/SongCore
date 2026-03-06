@@ -511,11 +511,8 @@ namespace SongCore
                               return;
                           }
 
-
                           BinaryCache.CacheEntry cached = null;
-                          bool hasCacheHit =
-                              (BinaryCache.TryGetValid(relativePath, dirTimestamp, out cached) ||
-                               BinaryCache.TryGet(relativePath, out cached));
+                          bool hasCacheHit = BinaryCache.TryGetValid(relativePath, dirTimestamp, out cached);
 
                           if (hasCacheHit && cached != null
                               && !string.IsNullOrEmpty(cached.SongHash) && !string.IsNullOrEmpty(cached.InfoDatJson))
@@ -541,7 +538,6 @@ namespace SongCore
                                   return;
                               }
                           }
-
 
                           if (!File.Exists(Path.Combine(songPath, CustomLevelPathHelper.kStandardLevelInfoFilename)))
                           {
@@ -951,6 +947,16 @@ namespace SongCore
 
                 Accessors.LevelIDAccessor(ref beatmapLevel) = levelID;
                 GetSongDuration(loadedSaveData, beatmapLevel);
+
+                Hashing.TryGetRelativePath(loadedSaveData.customLevelFolderInfo.folderPath, out var cacheRelPath);
+                var cacheEntry = BinaryCache.TryGet(cacheRelPath, out var existing) ? existing : new BinaryCache.CacheEntry();
+                cacheEntry.InfoDatJson = loadedSaveData.customLevelFolderInfo.levelInfoJsonString;
+                cacheEntry.LevelId = levelID;
+                if (Collections.CustomSongsData.TryGetValue(levelID, out var cachedSongData))
+                {
+                    cacheEntry.SongDataJson = JsonConvert.SerializeObject(cachedSongData);
+                }
+                BinaryCache.Set(cacheRelPath, cacheEntry);
             }
             catch (Exception e)
             {
@@ -1169,7 +1175,6 @@ namespace SongCore
                     GetSongDuration(loadedSaveData, beatmapLevel);
                 }
 
-                _customLevelLoader._loadedBeatmapSaveData[levelID] = loadedSaveData;
                 LoadedBeatmapSaveData.TryAdd(levelID, loadedSaveData);
 
                 Hashing.TryGetRelativePath(songPath, out var cacheRelPath);
