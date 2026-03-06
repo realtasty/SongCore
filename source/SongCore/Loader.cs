@@ -779,13 +779,14 @@ namespace SongCore
                 _loadingTask = null;
                 await UnityMainThreadTaskScheduler.Factory.StartNew(() => SongsLoadedEvent?.Invoke(this, CustomLevels));
 
-
                 Hashing.UpdateCachedHashesInternal(foundSongPaths.Keys);
                 Hashing.UpdateCachedAudioDataInternal(foundSongPaths.Keys);
 
-
-                BinaryCache.SaveAndPrune(foundSongPaths.Keys);
-                await Collections.SaveCustomLevelSongDataAsync();
+                if (fullRefresh)
+                {
+                    BinaryCache.SaveAndPrune(foundSongPaths.Keys);
+                    await Collections.SaveCustomLevelSongDataAsync();
+                }
             };
 
             try
